@@ -2,91 +2,84 @@ const express = require("express");
 const mongoose = require("mongoose");
 const cors = require("cors");
 require("dotenv").config();
-const http=require("http")
-const {Server}=require("socket.io")
-const router = require("./routes/productRoute");
+const http = require("http");
+const { Server } = require("socket.io");
 const passport = require("passport");
 const session = require("express-session");
-const User = require("./models/User"); // User modelini import et
-require("./auth"); // Passport konfiqurasiyası
+const router = require("./routes/productRoute");
+const AuthRouter = require("./routes/route");
 
-const DB_URL = process.env.DB_URL;
-const PORT = process.env.PORT;
+require("./auth");// Passport konfiqurasiyası
+
 const app = express();
 
-// Session konfiqurasiya
+// Session configuration
 app.use(
   session({
-    secret: "cats",
+    secret: process.env.SESSION_SECRET || "cats", // Make this dynamic for production
     resave: false,
     saveUninitialized: true,
   })
 );
+app.use(express.json());
+// CORS Configuration
+app.use(cors({
+  origin: process.env.FRONTEND_URL || 'http://localhost:5173',
+  methods: ["GET", "POST"],
+  credentials: true
+}));
 
+// Middleware
 app.use(passport.initialize());
 app.use(passport.session());
 
-app.use(cors());
-app.use(express.json());
+// Routes
+app.use("/api/auth", AuthRouter);
 app.use("/api/products", router);
-const server=http.createServer(app)
-const io=new Server(server,{
-  cors:{
-    origin:"http://localhost:5173", 
-    methods:["Get","Post"]
-  }
-})
-io.on("connection",(socket)=>{
-  console.log(`yeniIstifadeci Qosuldi ${socket.id}`)
-  socket.on("send_message",(data)=>{
-    console.log("mesaj Alindi: ",data)
-    io.emit("receive_message",data)
-  })
-  socket.on("disconnect",()=>{
-    console.log(`istifadeci ayrldi: ${socket.id}`)
-  })
-})
 
-mongoose.connect(DB_URL).then(() => {
- 
-  console.log("MongoDB bağlantısı uğurludur!");
-});
-
+// Define the isLoggedIn function
 function isLoggedIn(req, res, next) {
-  req.user ? next() : res.sendStatus(401);
+  if (req.isAuthenticated()) {
+    return next();  // Proceed to the next middleware (i.e., the route handler)
+  } else {
+    return res.status(401).json({ message: "Unauthorized access" });  // Send 401 if not authenticated
+  }
 }
 
-app.get("/auth/google", passport.authenticate("google", { scope: ["email", "profile"] }));
-app.get("/auth/github", passport.authenticate("github", { scope: ["email", "profile"] }));
-
-app.get(
-  "/google/callback",
-  passport.authenticate("google", {
-    successRedirect: "http://localhost:5173/home",
-    failureRedirect: "/auth/failure",
-  })
-);
-app.get(
-  "/github/callback",
-  passport.authenticate("google", {
-    successRedirect: "http://localhost:5173/home",
-    failureRedirect: "/auth/failure",
-  })
-);
-app.get("http://localhost:5173/home",(req,res)=>{
-  res.send(`<a href="/"> ${req.user.name}</a>`)
-})
-app.get("/", (req, res) => {
-  res.send('<a href="/auth/github">Github ilə Giriş</a>');
-});
-
-app.get("/", (req, res) => {
-  res.send('<a href="/auth/google">Google ilə Giriş</a>');
-});
+// Protected route
 app.get("/protected", isLoggedIn, (req, res) => {
   res.send(`Salamun Aleykum ${req.user.name}! Email: ${req.user.email}`);
 });
 
+// MongoDB Connection
+mongoose.connect(process.env.DB_URL)
+  .then(() => {
+    console.log("MongoDB bağlantısı uğurludur!");
+  })
+  .catch((err) => {
+    console.error("MongoDB bağlantısı uğursuz oldu!", err);
+  });
+
+// Passport authentication routes
+app.get("/auth/google", passport.authenticate("google", { scope: ["email", "profile"] }));
+app.get("/auth/github", passport.authenticate("github", { scope: ["email", "profile"] }));
+
+// Handle OAuth callbacks
+app.get("/google/callback", passport.authenticate("google", {
+  successRedirect: process.env.FRONTEND_URL || "http://localhost:5173/",
+  failureRedirect: "/auth/failure",
+}));
+app.get("/github/callback", passport.authenticate("github", {
+  successRedirect: process.env.FRONTEND_URL || "http://localhost:5173/",
+  failureRedirect: "/auth/failure",
+}));
+
+// Simple login options route
+app.get("/", (req, res) => {
+  res.send('<a href="/auth/github">Github ilə Giriş</a><br><a href="/auth/google">Google ilə Giriş</a>');
+});
+
+// Logout
 app.get("/logout", (req, res, next) => {
   req.logout((err) => {
     if (err) {
@@ -96,9 +89,35 @@ app.get("/logout", (req, res, next) => {
   });
 });
 
+// Failure route
 app.get("/auth/failure", (req, res) => {
   res.send("Giriş uğursuz oldu!");
 });
-server.listen(PORT,()=>{
-  console.log(`Server is going to http://localhost:${PORT}`)
-})
+
+// Create HTTP server
+const server = http.createServer(app);
+
+// Socket.io setup
+const io = new Server(server, {
+  cors: {
+    origin: process.env.FRONTEND_URL || "http://localhost:5173",
+    methods: ["GET", "POST"],
+    credentials: true
+  }
+});
+
+io.on("connection", (socket) => {
+  console.log(`Yeni istifadəçi qoşuldu: ${socket.id}`);
+  socket.on("send_message", (data) => {
+    console.log("Mesaj alındı:", data);
+    io.emit("receive_message", data);
+  });
+  socket.on("disconnect", () => {
+    console.log(`İstifadəçi ayrıldı: ${socket.id}`);
+  });
+});
+
+// Start server
+server.listen(process.env.PORT, () => {
+  console.log(`Server is running at http://localhost:${process.env.PORT}`);
+});
