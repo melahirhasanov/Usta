@@ -1,123 +1,97 @@
+require("dotenv").config();
+const fs = require("fs");
+const http = require("http");
 const express = require("express");
+const helmet = require("helmet");
 const mongoose = require("mongoose");
 const cors = require("cors");
-require("dotenv").config();
-const http = require("http");
-const { Server } = require("socket.io");
-const passport = require("passport");
-const session = require("express-session");
-const router = require("./routes/productRoute");
-const AuthRouter = require("./routes/route");
+const { setupSocket } = require("./socket");
+const { sanitize, limits } = require("./middleware/security");
 
-require("./auth");// Passport konfiqurasiyası
-
-const app = express();
-
-// Session configuration
-app.use(
-  session({
-    secret: process.env.SESSION_SECRET || "cats", // Make this dynamic for production
-    resave: false,
-    saveUninitialized: true,
-  })
-);
-app.use(express.json());
-// CORS Configuration
-app.use(cors({
-  origin: process.env.FRONTEND_URL || 'http://localhost:5173',
-  methods: ["GET", "POST"],
-  credentials: true
-}));
-
-// Middleware
-app.use(passport.initialize());
-app.use(passport.session());
-
-// Routes
-app.use("/api/auth", AuthRouter);
-app.use("/api/products", router);
-
-// Define the isLoggedIn function
-function isLoggedIn(req, res, next) {
-  if (req.isAuthenticated()) {
-    return next();  // Proceed to the next middleware (i.e., the route handler)
-  } else {
-    return res.status(401).json({ message: "Unauthorized access" });  // Send 401 if not authenticated
+// Zəruri mühit dəyişənləri olmadan server açılmır (zəif/boş açarla işləməsin)
+for (const name of ["JWT_SECRET", "DB_URL"]) {
+  if (!process.env[name]) {
+    console.error(`${name} .env faylında təyin edilməyib`);
+    process.exit(1);
   }
 }
+if (process.env.JWT_SECRET.length < 32) {
+  console.error("JWT_SECRET ən azı 32 simvol olmalıdır");
+  process.exit(1);
+}
 
-// Protected route
-app.get("/protected", isLoggedIn, (req, res) => {
-  res.send(`Salamun Aleykum ${req.user.name}! Email: ${req.user.email}`);
-});
+const app = express();
+const PORT = process.env.PORT || 8080;
+const isProd = process.env.NODE_ENV === "production";
+const allowedOrigins = ["http://localhost:5173", "http://localhost:3000", process.env.FRONTEND_URL].filter(Boolean);
 
-// MongoDB Connection
-mongoose.connect(process.env.DB_URL)
-  .then(() => {
-    console.log("MongoDB bağlantısı uğurludur!");
+app.set("trust proxy", 1); // reverse proxy (nginx) arxasında real IP — sorğu limiti üçün
+app.use(
+  helmet({
+    // Şəkillər/videolar frontend domenindən yüklənir
+    crossOriginResourcePolicy: { policy: "cross-origin" },
   })
-  .catch((err) => {
-    console.error("MongoDB bağlantısı uğursuz oldu!", err);
-  });
+);
+app.use(express.json({ limit: "100kb" }));
+app.use(sanitize);
+app.use(
+  cors({
+    origin: (origin, callback) =>
+      !origin || allowedOrigins.includes(origin) ? callback(null, true) : callback(new Error("CORS policy tərəfindən bloklandı")),
+    methods: ["GET", "POST", "DELETE", "PUT", "PATCH", "OPTIONS"],
+    credentials: true,
+    allowedHeaders: ["Content-Type", "Authorization"],
+  })
+);
+app.use("/api", limits.api);
 
-// Passport authentication routes
-app.get("/auth/google", passport.authenticate("google", { scope: ["email", "profile"] }));
-app.get("/auth/github", passport.authenticate("github", { scope: ["email", "profile"] }));
+// Köhnə lokal yükləmələr (yeni paylaşımlar Cloudinary-dədir)
+if (!fs.existsSync("uploads")) fs.mkdirSync("uploads");
+app.use("/uploads", express.static("uploads", { dotfiles: "deny", index: false }));
 
-// Handle OAuth callbacks
-app.get("/google/callback", passport.authenticate("google", {
-  successRedirect: process.env.FRONTEND_URL || "http://localhost:5173/",
-  failureRedirect: "/auth/failure",
-}));
-app.get("/github/callback", passport.authenticate("github", {
-  successRedirect: process.env.FRONTEND_URL || "http://localhost:5173/",
-  failureRedirect: "/auth/failure",
-}));
+// Brute-force-a qarşı: giriş, qeydiyyat və şifrə bərpası
+app.use(["/api/auth/login", "/api/auth/loginUsta", "/api/auth/register", "/api/auth/registerUsta", "/api/admin/login"], limits.auth);
+app.use(["/api/auth/forgot-password", "/api/auth/reset-password"], limits.passwordReset);
 
-// Simple login options route
-app.get("/", (req, res) => {
-  res.send('<a href="/auth/github">Github ilə Giriş</a><br><a href="/auth/google">Google ilə Giriş</a>');
+// API
+app.use("/api/auth", require("./routes/route.js"));
+app.use("/api/auth", require("./routes/rotuem.js"));
+app.use("/api/auth", require("./routes/forgetten.js"));
+app.use("/api/master", require("./routes/ustam.js"));
+app.use("/api/ustalar", require("./routes/ustaTur.js"));
+app.use("/api/post", require("./routes/post.js"));
+app.use("/api/messages", require("./routes/chatRoute.js"));
+app.use("/api/orders", require("./routes/orders.js"));
+app.use("/api/complaints", require("./routes/complaints.js"));
+app.use("/api/routing", limits.routing, require("./routes/routing.js"));
+app.use("/api/admin", require("./routes/admin.js"));
+
+// Onlayn istifadəçilərin chat ID-ləri (onlayn nişanı üçün)
+app.get("/api/online-users", (req, res) => {
+  res.json({ success: true, ids: app.get("onlineIds")?.() || [] });
 });
 
-// Logout
-app.get("/logout", (req, res, next) => {
-  req.logout((err) => {
-    if (err) {
-      return next(err);
-    }
-    res.redirect("/");
-  });
+app.get("/", (req, res) => res.json({ name: "Usta.az API", status: "ok" }));
+
+app.use("/api", (req, res) => res.status(404).json({ message: "Endpoint tapılmadı" }));
+
+// Gözlənilməz xətalar: 5xx-də daxili detalı istifadəçiyə göstərmə
+app.use((err, req, res, next) => {
+  const status = err.status || err.statusCode || 500;
+  if (status >= 500) console.error("Server xətası:", err);
+  if (err.type === "entity.too.large") return res.status(413).json({ message: "Sorğu çox böyükdür" });
+  if (err.code === "LIMIT_FILE_SIZE") return res.status(413).json({ message: "Fayl 50 MB-dan böyük olmamalıdır" });
+  res.status(status).json({ message: status >= 500 && isProd ? "Server xətası" : err.message || "Server xətası" });
 });
 
-// Failure route
-app.get("/auth/failure", (req, res) => {
-  res.send("Giriş uğursuz oldu!");
-});
+mongoose
+  .connect(process.env.DB_URL)
+  .then(() => console.log("MongoDB bağlantısı uğurludur!"))
+  .catch((error) => console.error("MongoDB bağlantısı uğursuz oldu!", error.message));
 
-// Create HTTP server
 const server = http.createServer(app);
+setupSocket(server, app, allowedOrigins);
 
-// Socket.io setup
-const io = new Server(server, {
-  cors: {
-    origin: process.env.FRONTEND_URL || "http://localhost:5173",
-    methods: ["GET", "POST"],
-    credentials: true
-  }
-});
-
-io.on("connection", (socket) => {
-  console.log(`Yeni istifadəçi qoşuldu: ${socket.id}`);
-  socket.on("send_message", (data) => {
-    console.log("Mesaj alındı:", data);
-    io.emit("receive_message", data);
-  });
-  socket.on("disconnect", () => {
-    console.log(`İstifadəçi ayrıldı: ${socket.id}`);
-  });
-});
-
-// Start server
-server.listen(process.env.PORT, () => {
-  console.log(`Server is running at http://localhost:${process.env.PORT}`);
+server.listen(PORT, () => {
+  console.log(`Server is running at http://localhost:${PORT}`);
 });

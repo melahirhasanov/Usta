@@ -1,0 +1,31 @@
+# Render: backend (Express + Socket.io). Render → New → Blueprint ilə bu faylı seçin.
+services:
+  - type: web
+    name: usta-az-api
+    runtime: node
+    plan: free
+    buildCommand: npm ci
+    startCommand: node index.js
+    healthCheckPath: /
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: NODE_VERSION
+        value: "20"
+      # Aşağıdakıların dəyərlərini Render panelində özünüz daxil edin (sync: false — repo-da saxlanılmır)
+      - key: FRONTEND_URL
+        sync: false
+      - key: JWT_SECRET
+        sync: false
+      - key: DB_URL
+        sync: false
+      - key: EMAIL_USER
+        sync: false
+      - key: EMAIL_PASS
+        sync: false
+      - key: CLOUDINARY_CLOUD_NAME
+        sync: false
+      - key: CLOUDINARY_API_KEY
+        sync: false
+      - key: CLOUDINARY_API_SECRET
+        sync: false
