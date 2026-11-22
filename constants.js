@@ -12,4 +12,8 @@ const CATEGORIES = [
   "Yüksəkmərtəbəli bina ustası", "Zinət əşyaları ustası", "Zolaq çəkmə ustası"
 ];
 
-module.exports = { CATEGORIES };
+// Yayımlanmış frontend: FRONTEND_URL təyin edilməyəndə istifadə olunur (CORS və şifrə bərpası linkləri)
+const DEFAULT_FRONTEND_URL = process.env.NODE_ENV === "production" ? "https://steady-tarsier-317aaf.netlify.app" : "http://localhost:5173";
+const FRONTEND_URL = (process.env.FRONTEND_URL || DEFAULT_FRONTEND_URL).split(",")[0].trim().replace(/\/+$/, "");
+
+module.exports = { CATEGORIES, FRONTEND_URL };

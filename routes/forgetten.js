@@ -7,7 +7,7 @@ const Master = require("../models/master");
 const { checkPassword } = require("../middleware/validate");
 
 const router = express.Router();
-const FRONTEND_URL = process.env.FRONTEND_URL || "http://localhost:5173";
+const { FRONTEND_URL } = require("../constants");
 const TOKEN_TTL_MS = 60 * 60 * 1000; // 1 saat
 
 // Bazada tokenin özü yox, SHA-256 hash-ı saxlanılır: baza sızsa belə linklər istifadə oluna bilməz

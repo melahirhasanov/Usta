@@ -7,6 +7,7 @@ const mongoose = require("mongoose");
 const cors = require("cors");
 const { setupSocket } = require("./socket");
 const { sanitize, limits } = require("./middleware/security");
+const { FRONTEND_URL } = require("./constants");
 
 // Zəruri mühit dəyişənləri olmadan server açılmır (zəif/boş açarla işləməsin)
 for (const name of ["JWT_SECRET", "DB_URL"]) {
@@ -23,7 +24,13 @@ if (process.env.JWT_SECRET.length < 32) {
 const app = express();
 const PORT = process.env.PORT || 8080;
 const isProd = process.env.NODE_ENV === "production";
-const allowedOrigins = ["http://localhost:5173", "http://localhost:3000", process.env.FRONTEND_URL].filter(Boolean);
+// FRONTEND_URL: bir və ya vergüllə ayrılmış bir neçə ünvan; sondakı "/" nəzərə alınmır
+const normalizeOrigin = (url) => url.trim().replace(/\/+$/, "");
+const allowedOrigins = [
+  "http://localhost:5173",
+  "http://localhost:3000",
+  ...(process.env.FRONTEND_URL || FRONTEND_URL).split(",").filter((u) => u.trim()).map(normalizeOrigin),
+];
 
 app.set("trust proxy", 1); // reverse proxy (nginx) arxasında real IP — sorğu limiti üçün
 app.use(
@@ -36,8 +43,8 @@ app.use(express.json({ limit: "100kb" }));
 app.use(sanitize);
 app.use(
   cors({
-    origin: (origin, callback) =>
-      !origin || allowedOrigins.includes(origin) ? callback(null, true) : callback(new Error("CORS policy tərəfindən bloklandı")),
+    // İcazəsiz mənbədən gələn sorğuya CORS başlığı verilmir (brauzer bloklayır); server xətası (500) qaytarılmır
+    origin: (origin, callback) => callback(null, !origin || allowedOrigins.includes(normalizeOrigin(origin))),
     methods: ["GET", "POST", "DELETE", "PUT", "PATCH", "OPTIONS"],
     credentials: true,
     allowedHeaders: ["Content-Type", "Authorization"],
@@ -94,4 +101,5 @@ setupSocket(server, app, allowedOrigins);
 
 server.listen(PORT, () => {
   console.log(`Server is running at http://localhost:${PORT}`);
+  console.log(`İcazəli frontend ünvanları: ${allowedOrigins.join(", ")}`);
 });
