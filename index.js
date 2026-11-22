@@ -29,7 +29,8 @@ const normalizeOrigin = (url) => url.trim().replace(/\/+$/, "");
 const allowedOrigins = [
   "http://localhost:5173",
   "http://localhost:3000",
-  ...(process.env.FRONTEND_URL || FRONTEND_URL).split(",").filter((u) => u.trim()).map(normalizeOrigin),
+  // Render-dəki FRONTEND_URL köhnə qalsa belə, standart (yayımlanmış) ünvan da həmişə icazəlidir
+  ...new Set([FRONTEND_URL, ...(process.env.FRONTEND_URL || "").split(",")].filter((u) => u.trim()).map(normalizeOrigin)),
 ];
 
 app.set("trust proxy", 1); // reverse proxy (nginx) arxasında real IP — sorğu limiti üçün
