@@ -54,4 +54,75 @@ router.post("/distances", async (req, res) => {
   res.json({ results });
 });
 
+// ---------- Ünvan axtarışı (geocoding): OpenStreetMap Nominatim ----------
+// Nominatim qaydaları: tanınan User-Agent, saniyədə ən çox 1 sorğu, nəticələri keşləmək.
+const NOMINATIM_URL = process.env.NOMINATIM_URL || "https://nominatim.openstreetmap.org";
+const GEO_TTL_MS = 24 * 60 * 60 * 1000;
+const geoCache = new Map(); // normallaşdırılmış sorğu -> { at, results }
+let lastGeoCall = 0;
+let geoQueue = Promise.resolve();
+
+// Sorğuları ardıcıl və ən azı 1 san. aralıqla göndərir
+function throttledFetch(url) {
+  const run = geoQueue.then(async () => {
+    const wait = lastGeoCall + 1000 - Date.now();
+    if (wait > 0) await new Promise((r) => setTimeout(r, wait));
+    lastGeoCall = Date.now();
+    return fetch(url, {
+      headers: { "User-Agent": "UstaTap/1.0 (usta-tap.netlify.app)", "Accept-Language": "az,en" },
+      signal: AbortSignal.timeout(8000),
+    });
+  });
+  geoQueue = run.catch(() => {});
+  return run;
+}
+
+// "Təbriz küçəsi, Nərimanov, Bakı, ..." -> qısa başlıq + alt sətir
+function toPlace(item) {
+  const a = item.address || {};
+  const street = [a.road || a.pedestrian || a.neighbourhood, a.house_number].filter(Boolean).join(" ");
+  const title = item.name || street || item.display_name.split(",")[0];
+  const area = [a.suburb || a.city_district || a.quarter, a.city || a.town || a.village].filter(Boolean);
+  const subtitle = [...new Set(area)].filter((s) => s !== title).join(", ");
+  return { title, subtitle, lat: Number(item.lat), lng: Number(item.lon) };
+}
+
+// GET /geocode?q=Təbriz küçəsi -> { results: [{ title, subtitle, lat, lng }] }
+router.get("/geocode", async (req, res) => {
+  const q = typeof req.query.q === "string" ? req.query.q.trim().slice(0, 120) : "";
+  if (q.length < 3) return res.json({ results: [] });
+  const key = q.toLowerCase();
+  const hit = geoCache.get(key);
+  if (hit && Date.now() - hit.at < GEO_TTL_MS) return res.json({ results: hit.results });
+
+  try {
+    // Azərbaycanla məhdud, Bakı ərazisinə üstünlük verilir
+    const params = new URLSearchParams({
+      q, format: "jsonv2", addressdetails: "1", limit: "6", countrycodes: "az", viewbox: "49.55,40.65,50.40,40.25",
+    });
+    const response = await throttledFetch(`${NOMINATIM_URL}/search?${params}`);
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const data = await response.json();
+    // Eyni adlı küçənin bir neçə hissəsi ayrıca qayıdır — başlıq+alt sətir üzrə təkləşdirilir
+    const seen = new Set();
+    const results = (Array.isArray(data) ? data : [])
+      .map(toPlace)
+      .filter((p) => Number.isFinite(p.lat) && Number.isFinite(p.lng))
+      .filter((p) => {
+        const id = `${p.title}|${p.subtitle}`.toLowerCase();
+        return !seen.has(id) && seen.add(id);
+      })
+      // Bakı/Abşeron ərazisindəki nəticələr öndə (sabit sıralama — Nominatim-in öz sırası qorunur)
+      .map((p, i) => ({ p, i, near: p.lat <= 40.65 && p.lat >= 40.25 && p.lng >= 49.55 && p.lng <= 50.4 }))
+      .sort((a, b) => b.near - a.near || a.i - b.i)
+      .map(({ p }) => p);
+    if (geoCache.size > 2000) geoCache.clear();
+    geoCache.set(key, { at: Date.now(), results });
+    res.json({ results });
+  } catch (error) {
+    console.warn("Geocoding xətası:", error.message);
+    res.status(502).json({ results: [], message: "Ünvan axtarışı hazırda işləmir" });
+  }
+});
+
 module.exports = router;
