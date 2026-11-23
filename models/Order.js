@@ -1,6 +1,6 @@
 const mongoose = require("mongoose");
 
-const STATUSES = ["pending", "accepted", "rejected", "in_progress", "completed", "cancelled"];
+const STATUSES = ["pending", "accepted", "rejected", "on_the_way", "in_progress", "completed", "cancelled"];
 
 const orderSchema = new mongoose.Schema(
   {
@@ -18,6 +18,12 @@ const orderSchema = new mongoose.Schema(
       coordinates: { type: [Number] }, // [lng, lat]
     },
     scheduledAt: { type: Date },
+    // Usta yolda olanda son məlum yeri (socket ilə yenilənir, müştəri xəritədə izləyir)
+    tracking: {
+      lat: { type: Number },
+      lng: { type: Number },
+      at: { type: Date },
+    },
     price: { type: Number, min: 0 },
     masterNote: { type: String, trim: true, maxlength: 300 },
     status: { type: String, enum: STATUSES, default: "pending", index: true },

@@ -10,12 +10,14 @@ const router = express.Router();
 const TRANSITIONS = {
   master: {
     pending: ["accepted", "rejected"],
-    accepted: ["in_progress", "cancelled"],
+    accepted: ["on_the_way", "in_progress", "cancelled"],
+    on_the_way: ["in_progress", "cancelled"],
     in_progress: ["completed"],
   },
   customer: {
     pending: ["cancelled"],
     accepted: ["cancelled"],
+    on_the_way: ["cancelled"],
   },
 };
 

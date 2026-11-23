@@ -13,7 +13,7 @@ const CATEGORIES = [
 ];
 
 // Yayımlanmış frontend: FRONTEND_URL təyin edilməyəndə istifadə olunur (CORS və şifrə bərpası linkləri)
-const DEFAULT_FRONTEND_URL = process.env.NODE_ENV === "production" ? "https://usta-tap.netlify.app" : "http://localhost:5173";
+const DEFAULT_FRONTEND_URL = process.env.NODE_ENV === "production" ? "https://elustu.netlify.app" : "http://localhost:5173";
 const FRONTEND_URL = (process.env.FRONTEND_URL || DEFAULT_FRONTEND_URL).split(",")[0].trim().replace(/\/+$/, "");
 
-module.exports = { CATEGORIES, FRONTEND_URL };
+module.exports = { CATEGORIES, FRONTEND_URL, DEFAULT_FRONTEND_URL };

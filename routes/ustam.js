@@ -12,9 +12,9 @@ const router = express.Router()
 const PRIVATE_FIELDS = "-password -resetPasswordToken -resetPasswordExpires"
 const PUBLIC_FIELDS = `${PRIVATE_FIELDS} -phone -followers -following -isBlocked`
 
-// Hazırda işi icra olunan (in_progress) ustalar "məşğul" sayılır
+// Yolda olan və ya işi icra edən ustalar "məşğul" sayılır
 async function busyMasterIds() {
-    const ids = await Order.distinct("master", { status: "in_progress" })
+    const ids = await Order.distinct("master", { status: { $in: ["on_the_way", "in_progress"] } })
     return new Set(ids.map(String))
 }
 
@@ -105,7 +105,7 @@ router.get("/:id", async (req, res) => {
         }
         const usta = await Master.findOne({ _id: id, isBlocked: { $ne: true } }).select(PUBLIC_FIELDS).lean()
         if (!usta) return res.status(404).json({ message: "Usta tapılmadı" })
-        const busy = await Order.exists({ master: id, status: "in_progress" })
+        const busy = await Order.exists({ master: id, status: { $in: ["on_the_way", "in_progress"] } })
         res.json({ ...usta, isAvailable: usta.isAvailable !== false, isBusy: Boolean(busy) })
     } catch (error) {
         console.error("Usta yüklənərkən xəta:", error)

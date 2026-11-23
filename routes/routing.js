@@ -69,7 +69,7 @@ function throttledFetch(url) {
     if (wait > 0) await new Promise((r) => setTimeout(r, wait));
     lastGeoCall = Date.now();
     return fetch(url, {
-      headers: { "User-Agent": "UstaTap/1.0 (usta-tap.netlify.app)", "Accept-Language": "az,en" },
+      headers: { "User-Agent": "Elustu/1.0 (elustu.netlify.app)", "Accept-Language": "az,en" },
       signal: AbortSignal.timeout(8000),
     });
   });

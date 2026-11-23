@@ -3,6 +3,7 @@ const mongoose = require("mongoose");
 const Message = require("../models/message");
 const Master = require("../models/master");
 const Users = require("../models/Users");
+const Order = require("../models/Order");
 const { resolveAccount } = require("../middleware/auth");
 
 // Otaq ID formatı: "<müştəri email>_<usta ID>" — istifadəçi yalnız öz ID-si olan otağa qoşula bilər
@@ -128,6 +129,30 @@ function setupSocket(server, app, allowedOrigins) {
 
     socket.on("typing_indicator", ({ roomId, isTyping } = {}) => {
       if (belongsToRoom(roomId, chatId)) socket.to(roomId).emit("typing_indicator", { roomId, userId: chatId, isTyping });
+    });
+
+    // ---------- Ustanın canlı yeri (sifariş "Yoldadır" statusunda) ----------
+    // Usta yalnız öz sifarişi üçün yer göndərə bilər; yer müştəriyə ötürülür və sifarişdə saxlanılır
+    const allowLocation = eventLimiter(30, 60000); // dəqiqədə ən çox 30 yeniləmə
+    const trackCache = new Map(); // orderId -> { customer, until }
+    socket.on("order:location", async ({ orderId, lat, lng } = {}) => {
+      try {
+        if (role !== "master" || !allowLocation()) return;
+        if (!mongoose.Types.ObjectId.isValid(orderId) || !Number.isFinite(lat) || !Number.isFinite(lng)) return;
+        if (Math.abs(lat) > 90 || Math.abs(lng) > 180) return;
+        let entry = trackCache.get(orderId);
+        if (!entry || entry.until < Date.now()) {
+          const order = await Order.findOne({ _id: orderId, master: chatId, status: "on_the_way" }).select("customer.email").lean();
+          if (!order) return trackCache.delete(orderId);
+          entry = { customer: order.customer.email, until: Date.now() + 20000 };
+          trackCache.set(orderId, entry);
+        }
+        const at = new Date();
+        await Order.updateOne({ _id: orderId, status: "on_the_way" }, { tracking: { lat, lng, at } });
+        notifyUsers([entry.customer, chatId], "order_location", { orderId, lat, lng, at });
+      } catch (error) {
+        console.error("Yer yeniləmə xətası:", error.message);
+      }
     });
 
     // ---------- Zəng siqnalları (WebRTC). Səs birbaşa brauzerlər arasında gedir, nömrə paylaşılmır ----------

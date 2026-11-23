@@ -11,7 +11,7 @@
   "keywords": [],
   "author": "",
   "license": "ISC",
-  "description": "Usta.az API (Express + Socket.io + MongoDB)",
+  "description": "Əlüstü API (Express + Socket.io + MongoDB)",
   "dependencies": {
     "bcryptjs": "^2.4.3",
     "cloudinary": "^2.9.0",

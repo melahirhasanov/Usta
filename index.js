@@ -7,7 +7,7 @@ const mongoose = require("mongoose");
 const cors = require("cors");
 const { setupSocket } = require("./socket");
 const { sanitize, limits } = require("./middleware/security");
-const { FRONTEND_URL } = require("./constants");
+const { FRONTEND_URL, DEFAULT_FRONTEND_URL } = require("./constants");
 
 // Zəruri mühit dəyişənləri olmadan server açılmır (zəif/boş açarla işləməsin)
 for (const name of ["JWT_SECRET", "DB_URL"]) {
@@ -30,7 +30,7 @@ const allowedOrigins = [
   "http://localhost:5173",
   "http://localhost:3000",
   // Render-dəki FRONTEND_URL köhnə qalsa belə, standart (yayımlanmış) ünvan da həmişə icazəlidir
-  ...new Set([FRONTEND_URL, ...(process.env.FRONTEND_URL || "").split(",")].filter((u) => u.trim()).map(normalizeOrigin)),
+  ...new Set([FRONTEND_URL, DEFAULT_FRONTEND_URL, ...(process.env.FRONTEND_URL || "").split(",")].filter((u) => u.trim()).map(normalizeOrigin)),
 ];
 
 app.set("trust proxy", 1); // reverse proxy (nginx) arxasında real IP — sorğu limiti üçün
@@ -79,7 +79,7 @@ app.get("/api/online-users", (req, res) => {
   res.json({ success: true, ids: app.get("onlineIds")?.() || [] });
 });
 
-app.get("/", (req, res) => res.json({ name: "Usta.az API", status: "ok" }));
+app.get("/", (req, res) => res.json({ name: "Əlüstü API", status: "ok" }));
 
 app.use("/api", (req, res) => res.status(404).json({ message: "Endpoint tapılmadı" }));
 

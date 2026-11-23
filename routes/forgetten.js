@@ -44,7 +44,7 @@ router.post("/forgot-password", async (req, res) => {
     });
     await transporter.sendMail({
       to: found.account.email,
-      from: `"USTA.AZ" <${process.env.EMAIL_USER}>`,
+      from: `"Əlüstü" <${process.env.EMAIL_USER}>`,
       subject: "Şifrəni yeniləmə linki",
       text: `Şifrənizi yeniləmək üçün bu linkə keçin (1 saat etibarlıdır): ${FRONTEND_URL}/new-password/${resetToken}\n\nBu sorğunu siz göndərməmisinizsə, bu emaili nəzərə almayın.`,
     });
