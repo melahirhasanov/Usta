@@ -9,96 +9,82 @@ const Master = require("../models/master");
 const { requireAuth } = require("../middleware/auth");
 
 // Açarlar .env faylındadır (heç vaxt koda yazmayın)
+const CLOUDINARY_READY = ["CLOUDINARY_CLOUD_NAME", "CLOUDINARY_API_KEY", "CLOUDINARY_API_SECRET"].every((k) => process.env[k]);
+if (!CLOUDINARY_READY) console.warn("⚠️  Cloudinary açarları təyin edilməyib — şəkil/video yükləmə işləməyəcək");
 cloudinary.config({
   cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
   api_key: process.env.CLOUDINARY_API_KEY,
   api_secret: process.env.CLOUDINARY_API_SECRET,
+  secure: true,
 });
 
-// ✅ Cloudinary Storage
+const MAX_SIZE_MB = 50; // Cloudinary pulsuz planında video limiti 100 MB-dır
+const ALLOWED_MIME = /^(image\/(jpeg|png|gif|webp)|video\/(mp4|quicktime|webm|x-msvideo))$/;
+
 const storage = new CloudinaryStorage({
-  cloudinary: cloudinary,
-  params: {
-    folder: 'usta_posts',
-    allowed_formats: ['jpg', 'jpeg', 'png', 'gif', 'mp4', 'mov', 'avi'],
-    resource_type: 'auto'
-  }
+  cloudinary,
+  params: (req, file) => ({
+    folder: "usta_posts",
+    resource_type: file.mimetype.startsWith("video/") ? "video" : "image",
+  }),
 });
 
 const upload = multer({
-  storage: storage,
-  limits: {
-    fileSize: 50 * 1024 * 1024 // 50MB
-  }
+  storage,
+  limits: { fileSize: MAX_SIZE_MB * 1024 * 1024, files: 1 },
+  fileFilter: (req, file, cb) =>
+    ALLOWED_MIME.test(file.mimetype) ? cb(null, true) : cb(Object.assign(new Error("BAD_TYPE"), { code: "BAD_TYPE" })),
 });
 
-// ✅ POST Yaratmaq
-router.post("/post", requireAuth, upload.single("media"), async (req, res) => {
+// Multer/Cloudinary xətalarını istifadəçiyə aydın mesaj kimi qaytarır
+function uploadMedia(req, res, next) {
+  if (!CLOUDINARY_READY) return res.status(503).json({ success: false, message: "Media yükləmə hazırda işləmir (server konfiqurasiyası)" });
+  upload.single("media")(req, res, (err) => {
+    if (!err) return next();
+    if (err.code === "LIMIT_FILE_SIZE") return res.status(413).json({ success: false, message: `Fayl çox böyükdür (ən çox ${MAX_SIZE_MB} MB)` });
+    if (err.code === "BAD_TYPE") return res.status(400).json({ success: false, message: "Yalnız JPG, PNG, GIF, WEBP şəkil və ya MP4, MOV, WEBM video yükləyə bilərsiniz" });
+    console.error("Media yükləmə xətası:", err.message || err);
+    res.status(502).json({ success: false, message: "Fayl yüklənmədi, bir az sonra yenidən cəhd edin" });
+  });
+}
+
+const destroyMedia = (post) =>
+  post.cloudinaryPublicId
+    ? cloudinary.uploader.destroy(post.cloudinaryPublicId, { resource_type: post.mediaType === "video" ? "video" : "image", invalidate: true }).catch((e) => console.warn("Cloudinary silmə xətası:", e.message))
+    : Promise.resolve();
+
+// Post yaratmaq — yalnız usta, öz adına
+router.post("/post", requireAuth, uploadMedia, async (req, res) => {
+  const file = req.file;
   try {
-    // Post həmişə daxil olmuş ustanın adına yaradılır
-    const user = req.userId;
-    const { description, title } = req.body;
-    
-    // Validasiya
-    if (!description || !title) {
-      return res.status(400).json({ 
-        success: false,
-        message: "Bütün Məlumatları Doldurun" 
-      });
+    const title = typeof req.body.title === "string" ? req.body.title.trim().slice(0, 120) : "";
+    const description = typeof req.body.description === "string" ? req.body.description.trim().slice(0, 2000) : "";
+    if (!file) return res.status(400).json({ success: false, message: "Şəkil və ya video seçin" });
+    if (!title || !description) {
+      await destroyMedia({ cloudinaryPublicId: file.filename, mediaType: file.mimetype.startsWith("video/") ? "video" : "image" });
+      return res.status(400).json({ success: false, message: "Başlıq və təsviri doldurun" });
     }
 
-    // Cloudinary URL
-    const ImageUrl = req.file ? req.file.path : null;
-    
-    if (!ImageUrl) {
-      return res.status(400).json({ 
-        success: false,
-        message: "Media Faylı Yüklənmədi" 
-      });
-    }
-
-    // Ustanı tap
-    const usta = await Master.findById(user);
+    const usta = await Master.findById(req.userId);
     if (!usta) {
-      return res.status(404).json({ 
-        success: false,
-        message: "Usta Tapılmadı" 
-      });
+      await destroyMedia({ cloudinaryPublicId: file.filename, mediaType: file.mimetype.startsWith("video/") ? "video" : "image" });
+      return res.status(403).json({ success: false, message: "Yalnız ustalar paylaşım edə bilər" });
     }
 
-    // Yeni post yarat
-    const newPost = new Post({
-      user,
-      media: ImageUrl,
+    const newPost = await Post.create({
+      user: usta._id,
+      media: file.path, // Cloudinary https URL
+      mediaType: file.mimetype.startsWith("video/") ? "video" : "image",
+      cloudinaryPublicId: file.filename,
       description,
-      title
+      title,
     });
+    await Master.updateOne({ _id: usta._id }, { $push: { posts: newPost._id } });
 
-    await newPost.save();
-
-    // Ustanın postlarına əlavə et
-    usta.posts = usta.posts || [];
-    usta.posts.push(newPost._id);
-    await usta.save();
-
-    // Uğurlu cavab
-    res.status(201).json({
-      success: true,
-      message: "Postunuz Uğurla Göndərildi",
-      data: {
-        postId: newPost._id,
-        mediaUrl: ImageUrl,
-        title: title
-      }
-    });
-
+    res.status(201).json({ success: true, message: "Paylaşım əlavə edildi", data: { postId: newPost._id, mediaUrl: newPost.media, title } });
   } catch (error) {
-    console.error("❌ POST XƏTASI:", error);
-    res.status(500).json({
-      success: false,
-      message: "Server Xətası",
-      error: error.message
-    });
+    console.error("Post yaratma xətası:", error.message);
+    res.status(500).json({ success: false, message: "Server xətası" });
   }
 });
 
@@ -147,6 +133,7 @@ router.delete("/:postId", requireAuth, async (req, res) => {
     }
     await post.deleteOne();
     await Master.updateOne({ _id: req.userId }, { $pull: { posts: post._id } });
+    await destroyMedia(post); // faylı Cloudinary-dən də sil
     res.json({ success: true });
   } catch (error) {
     console.error("Post silmə xətası:", error);
