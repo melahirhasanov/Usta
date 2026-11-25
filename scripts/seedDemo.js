@@ -8,9 +8,9 @@
 require("dotenv").config();
 const mongoose = require("mongoose");
 const cloudinary = require("cloudinary").v2;
-const Master = require("../models/master");
+const Master = require("../models/Master");
 const Post = require("../models/Post");
-const { CATEGORIES } = require("../constants");
+const { CATEGORIES } = require("../config/constants");
 
 const PER_CATEGORY_BAKU = 5;
 const BAKU = [["Nəsimi", 40.3925, 49.8425], ["Nərimanov", 40.4045, 49.8725], ["Yasamal", 40.3865, 49.8095], ["Xətai", 40.383, 49.895], ["Binəqədi", 40.46, 49.83], ["Sabunçu", 40.443, 49.948], ["Nizami", 40.3985, 49.9455]];

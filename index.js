@@ -7,7 +7,7 @@ const mongoose = require("mongoose");
 const cors = require("cors");
 const { setupSocket } = require("./socket");
 const { sanitize, limits } = require("./middleware/security");
-const { FRONTEND_URL, DEFAULT_FRONTEND_URL } = require("./constants");
+const { FRONTEND_URL, DEFAULT_FRONTEND_URL } = require("./config/constants");
 
 // Zəruri mühit dəyişənləri olmadan server açılmır (zəif/boş açarla işləməsin)
 for (const name of ["JWT_SECRET", "DB_URL"]) {
@@ -62,18 +62,18 @@ app.use(["/api/auth/login", "/api/auth/loginUsta", "/api/auth/register", "/api/a
 app.use(["/api/auth/forgot-password", "/api/auth/reset-password"], limits.passwordReset);
 
 // API
-app.use("/api/auth", require("./routes/route.js"));
-app.use("/api/auth", require("./routes/rotuem.js"));
-app.use("/api/auth", require("./routes/forgetten.js"));
-app.use("/api/master", require("./routes/ustam.js"));
-app.use("/api/ustalar", require("./routes/ustaTur.js"));
-app.use("/api/post", require("./routes/post.js"));
-app.use("/api/profile/photo", require("./routes/profilePhoto.js"));
-app.use("/api/messages", require("./routes/chatRoute.js"));
-app.use("/api/orders", require("./routes/orders.js"));
-app.use("/api/complaints", require("./routes/complaints.js"));
-app.use("/api/routing", limits.routing, require("./routes/routing.js"));
-app.use("/api/admin", require("./routes/admin.js"));
+app.use("/api/auth", require("./routes/customerAuth"));
+app.use("/api/auth", require("./routes/masterAuth"));
+app.use("/api/auth", require("./routes/passwordReset"));
+app.use("/api/master", require("./routes/masters"));
+app.use("/api/ustalar", require("./routes/ustaTur"));
+app.use("/api/post", require("./routes/posts"));
+app.use("/api/profile/photo", require("./routes/profilePhoto"));
+app.use("/api/messages", require("./routes/messages"));
+app.use("/api/orders", require("./routes/orders"));
+app.use("/api/complaints", require("./routes/complaints"));
+app.use("/api/routing", limits.routing, require("./routes/routing"));
+app.use("/api/admin", require("./routes/admin"));
 
 // Onlayn istifadəçilərin chat ID-ləri (onlayn nişanı üçün)
 app.get("/api/online-users", (req, res) => {

@@ -1,6 +1,6 @@
 const jwt = require("jsonwebtoken");
-const Users = require("../models/Users");
-const Master = require("../models/master");
+const Users = require("../models/User");
+const Master = require("../models/Master");
 const Admin = require("../models/Admin");
 
 /**

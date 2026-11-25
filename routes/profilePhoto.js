@@ -1,8 +1,8 @@
 const express = require("express");
 const multer = require("multer");
 const cloudinary = require("cloudinary").v2;
-const Master = require("../models/master");
-const Users = require("../models/Users");
+const Master = require("../models/Master");
+const Users = require("../models/User");
 const { requireAuth, requireRole } = require("../middleware/auth");
 const { rateLimit } = require("../middleware/security");
 

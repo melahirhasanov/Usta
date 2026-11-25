@@ -1,8 +1,8 @@
 const express = require("express");
 const mongoose = require("mongoose");
-const Message = require("../models/message");
-const Master = require("../models/master");
-const Users = require("../models/Users");
+const Message = require("../models/Message");
+const Master = require("../models/Master");
+const Users = require("../models/User");
 const { requireAuth } = require("../middleware/auth");
 const { belongsToRoom, resolveReceiver } = require("../socket");
 

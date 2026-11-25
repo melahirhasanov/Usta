@@ -1,9 +1,9 @@
 const express = require("express")
 const mongoose = require("mongoose")
-const Master = require("../models/master")
+const Master = require("../models/Master")
 const Order = require("../models/Order")
 const { requireAuth, requireRole } = require("../middleware/auth")
-const { CATEGORIES } = require("../constants")
+const { CATEGORIES } = require("../config/constants")
 const { checkCoords, checkName, checkPhone, firstError } = require("../middleware/validate")
 const router = express.Router()
 

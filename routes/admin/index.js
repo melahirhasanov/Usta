@@ -2,12 +2,12 @@ const express = require("express");
 const mongoose = require("mongoose");
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
-const Admin = require("../models/Admin");
-const Master = require("../models/master");
-const Users = require("../models/Users");
-const Order = require("../models/Order");
-const Complaint = require("../models/Complaint");
-const { requireAuth, requireRole } = require("../middleware/auth");
+const Admin = require("../../models/Admin");
+const Master = require("../../models/Master");
+const Users = require("../../models/User");
+const Order = require("../../models/Order");
+const Complaint = require("../../models/Complaint");
+const { requireAuth, requireRole } = require("../../middleware/auth");
 
 const router = express.Router();
 const escapeRegex = (t) => String(t).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");

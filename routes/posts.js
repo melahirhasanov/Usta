@@ -5,7 +5,7 @@ const mongoose = require("mongoose");
 const cloudinary = require('cloudinary').v2;
 const { CloudinaryStorage } = require('multer-storage-cloudinary');
 const Post = require("../models/Post");
-const Master = require("../models/master");
+const Master = require("../models/Master");
 const { requireAuth } = require("../middleware/auth");
 
 // Açarlar .env faylındadır (heç vaxt koda yazmayın)

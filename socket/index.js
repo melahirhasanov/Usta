@@ -1,8 +1,8 @@
 const socketIo = require("socket.io");
 const mongoose = require("mongoose");
-const Message = require("../models/message");
-const Master = require("../models/master");
-const Users = require("../models/Users");
+const Message = require("../models/Message");
+const Master = require("../models/Master");
+const Users = require("../models/User");
 const Order = require("../models/Order");
 const { resolveAccount } = require("../middleware/auth");
 

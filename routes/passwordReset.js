@@ -2,12 +2,12 @@ const express = require("express");
 const crypto = require("crypto");
 const bcrypt = require("bcryptjs");
 const nodemailer = require("nodemailer");
-const Users = require("../models/Users");
-const Master = require("../models/master");
+const Users = require("../models/User");
+const Master = require("../models/Master");
 const { checkPassword } = require("../middleware/validate");
 
 const router = express.Router();
-const { FRONTEND_URL } = require("../constants");
+const { FRONTEND_URL } = require("../config/constants");
 const TOKEN_TTL_MS = 60 * 60 * 1000; // 1 saat
 
 // Bazada tokenin özü yox, SHA-256 hash-ı saxlanılır: baza sızsa belə linklər istifadə oluna bilməz

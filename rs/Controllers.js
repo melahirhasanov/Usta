@@ -1,4 +1,4 @@
-const Master=require("../models/master")
+const Master=require("../models/Master")
 
 const getNearestMaster=async(req,res)=>{
     // GET sorğusunda body olmur, ona görə koordinatlar query-dən oxunur
