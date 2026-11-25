@@ -27,8 +27,8 @@ const isProd = process.env.NODE_ENV === "production";
 // FRONTEND_URL: bir və ya vergüllə ayrılmış bir neçə ünvan; sondakı "/" nəzərə alınmır
 const normalizeOrigin = (url) => url.trim().replace(/\/+$/, "");
 const allowedOrigins = [
-  "http://localhost:5173",
-  "http://localhost:3000",
+  // Lokal ünvanlar yalnız inkişaf mühitində
+  ...(isProd ? [] : ["http://localhost:5173", "http://localhost:3000"]),
   // Render-dəki FRONTEND_URL köhnə qalsa belə, standart (yayımlanmış) ünvan da həmişə icazəlidir
   ...new Set([FRONTEND_URL, DEFAULT_FRONTEND_URL, ...(process.env.FRONTEND_URL || "").split(",")].filter((u) => u.trim()).map(normalizeOrigin)),
 ];
@@ -52,6 +52,11 @@ app.use(
   })
 );
 app.use("/api", limits.api);
+// Şəxsi məlumat brauzer və proxy keşində qalmasın
+app.use("/api", (req, res, next) => {
+  res.set("Cache-Control", "no-store");
+  next();
+});
 
 // Köhnə lokal yükləmələr (yeni paylaşımlar Cloudinary-dədir)
 if (!fs.existsSync("uploads")) fs.mkdirSync("uploads");
@@ -59,14 +64,22 @@ app.use("/uploads", express.static("uploads", { dotfiles: "deny", index: false }
 
 // Brute-force-a qarşı: giriş, qeydiyyat və şifrə bərpası
 app.use(["/api/auth/login", "/api/auth/loginUsta", "/api/auth/register", "/api/auth/registerUsta", "/api/admin/login"], limits.auth);
+app.use(["/api/auth/login", "/api/auth/loginUsta", "/api/admin/login"], limits.account);
+app.post(["/api/orders", "/api/complaints"], limits.create);
 app.use(["/api/auth/forgot-password", "/api/auth/reset-password"], limits.passwordReset);
+
+// Yeni qeydiyyat admin paneldən dayandırıla bilər
+const { getSettings } = require("./models/SiteSettings");
+app.use(["/api/auth/register", "/api/auth/registerUsta"], (req, res, next) =>
+  getSettings().then((s) => (s.registrationEnabled ? next() : res.status(503).json({ message: "Qeydiyyat müvəqqəti dayandırılıb" })), next));
+app.get("/api/settings", (req, res, next) =>
+  getSettings().then((s) => res.json({ announcement: s.announcementActive ? s.announcement : "", registrationEnabled: s.registrationEnabled, ordersEnabled: s.ordersEnabled }), next));
 
 // API
 app.use("/api/auth", require("./routes/customerAuth"));
 app.use("/api/auth", require("./routes/masterAuth"));
 app.use("/api/auth", require("./routes/passwordReset"));
 app.use("/api/master", require("./routes/masters"));
-app.use("/api/ustalar", require("./routes/ustaTur"));
 app.use("/api/post", require("./routes/posts"));
 app.use("/api/profile/photo", require("./routes/profilePhoto"));
 app.use("/api/messages", require("./routes/messages"));
@@ -75,9 +88,10 @@ app.use("/api/complaints", require("./routes/complaints"));
 app.use("/api/routing", limits.routing, require("./routes/routing"));
 app.use("/api/admin", require("./routes/admin"));
 
-// Onlayn istifadəçilərin chat ID-ləri (onlayn nişanı üçün)
+// Onlayn nişanı: hamıya yalnız ustaların ID-si; müştəri email-ləri heç vaxt ictimai qaytarılmır.
+// Daxil olmuş usta yalnız özü ilə yazışan müştəriləri görür (socket "presence" hadisəsi ilə).
 app.get("/api/online-users", (req, res) => {
-  res.json({ success: true, ids: app.get("onlineIds")?.() || [] });
+  res.json({ success: true, ids: app.get("onlineMasterIds")?.() || [] });
 });
 
 app.get("/", (req, res) => res.json({ name: "Əlüstü API", status: "ok" }));
@@ -100,6 +114,9 @@ mongoose
 
 const server = http.createServer(app);
 setupSocket(server, app, allowedOrigins);
+
+// Gözlənilməz xəta bütün istifadəçiləri dayandırmasın
+process.on("unhandledRejection", (e) => console.error("Tutulmamış xəta:", e?.message || e));
 
 server.listen(PORT, () => {
   console.log(`Server is running at http://localhost:${PORT}`);

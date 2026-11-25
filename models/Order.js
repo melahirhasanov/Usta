@@ -45,5 +45,7 @@ const orderSchema = new mongoose.Schema(
 );
 
 orderSchema.statics.STATUSES = STATUSES;
+// "orders" kolleksiyası başqa layihə ilə ortaqdır: yalnız bu saytın sifarişləri
+orderSchema.statics.OWN = { "customer.email": { $exists: true }, status: { $in: STATUSES } };
 
 module.exports = mongoose.model("Order", orderSchema);

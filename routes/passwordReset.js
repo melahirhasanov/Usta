@@ -1,25 +1,21 @@
 const express = require("express");
-const crypto = require("crypto");
 const bcrypt = require("bcryptjs");
-const nodemailer = require("nodemailer");
 const Users = require("../models/User");
 const Master = require("../models/Master");
+const { findByEmail } = require("../services/login");
 const { checkPassword } = require("../middleware/validate");
 
 const router = express.Router();
-const { FRONTEND_URL } = require("../config/constants");
-const TOKEN_TTL_MS = 60 * 60 * 1000; // 1 saat
-
-// Bazada tokenin özü yox, SHA-256 hash-ı saxlanılır: baza sızsa belə linklər istifadə oluna bilməz
-const hashToken = (token) => crypto.createHash("sha256").update(token).digest("hex");
+const { sendMail, mailMode } = require("../services/mailer");
+const { createResetLink, hashToken } = require("../services/resetLink");
 
 // Hesabın mövcudluğunu açıqlamamaq üçün cavab həmişə eynidir
 const GENERIC = { success: true, message: "Bu email ilə hesab varsa, bərpa linki göndərildi. Poçt qutunuzu yoxlayın." };
 
 async function findAccountByEmail(email) {
-  const user = await Users.findOne({ email });
+  const user = await findByEmail(Users, email);
   if (user) return { account: user, Model: Users };
-  const master = await Master.findOne({ email });
+  const master = await findByEmail(Master, email);
   if (master) return { account: master, Model: Master };
   return null;
 }
@@ -28,30 +24,24 @@ router.post("/forgot-password", async (req, res) => {
   try {
     const email = typeof req.body.email === "string" ? req.body.email.trim() : "";
     if (!email) return res.status(400).json({ message: "Email tələb olunur" });
+    if (!mailMode()) return res.status(503).json({ message: "Email göndərmə hazırda işləmir. Dəstəyə yazın." });
 
     const found = await findAccountByEmail(email);
-    if (!found) return res.json(GENERIC);
-
-    const resetToken = crypto.randomBytes(32).toString("hex");
-    await found.Model.updateOne(
-      { _id: found.account._id },
-      { resetPasswordToken: hashToken(resetToken), resetPasswordExpires: Date.now() + TOKEN_TTL_MS }
-    );
-
-    const transporter = nodemailer.createTransport({
-      service: "gmail",
-      auth: { user: process.env.EMAIL_USER, pass: process.env.EMAIL_PASS },
-    });
-    await transporter.sendMail({
-      to: found.account.email,
-      from: `"Əlüstü" <${process.env.EMAIL_USER}>`,
-      subject: "Şifrəni yeniləmə linki",
-      text: `Şifrənizi yeniləmək üçün bu linkə keçin (1 saat etibarlıdır): ${FRONTEND_URL}/new-password/${resetToken}\n\nBu sorğunu siz göndərməmisinizsə, bu emaili nəzərə almayın.`,
-    });
+    if (found && !found.account.isDemo) {
+      // Cavab gözlədilmir: hesabın olub-olmadığı nə mətndən, nə də cavab vaxtından bilinsin
+      createResetLink(found.Model, found.account._id)
+        .then((link) => sendMail({
+          to: found.account.email,
+          subject: "Əlüstü: şifrəni yeniləmə linki",
+          text: `Şifrənizi yeniləmək üçün bu linkə keçin (1 saat etibarlıdır): ${link}\n\nBu sorğunu siz göndərməmisinizsə, bu emaili nəzərə almayın.`,
+          html: `<div style="font-family:Arial,sans-serif;max-width:480px"><h2 style="color:#0F766E">Əlüstü</h2><p>Şifrənizi yeniləmək üçün düyməyə basın. Link 1 saat etibarlıdır.</p><p><a href="${link}" style="background:#0F766E;color:#fff;padding:12px 24px;border-radius:8px;text-decoration:none">Şifrəni yenilə</a></p><p style="color:#64748B;font-size:13px">Bu sorğunu siz göndərməmisinizsə, bu emaili nəzərə almayın.</p></div>`,
+        }))
+        .catch((e) => console.error("Şifrə bərpa emaili göndərilmədi:", e.message));
+    }
     res.json(GENERIC);
   } catch (err) {
     console.error("Şifrə bərpa xətası:", err.message);
-    res.status(500).json({ message: "Email göndərmək mümkün olmadı, bir az sonra yenidən cəhd edin" });
+    res.status(500).json({ message: "Xəta baş verdi, bir az sonra yenidən cəhd edin" });
   }
 });
 

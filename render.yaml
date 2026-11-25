@@ -23,6 +23,11 @@ services:
         sync: false
       - key: EMAIL_PASS
         sync: false
+      # Pulsuz planda SMTP bağlıdır: Brevo HTTPS API (EMAIL_FROM — Brevo-da təsdiqlənmiş göndərən)
+      - key: BREVO_API_KEY
+        sync: false
+      - key: EMAIL_FROM
+        sync: false
       - key: CLOUDINARY_CLOUD_NAME
         sync: false
       - key: CLOUDINARY_API_KEY

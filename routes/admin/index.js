@@ -1,6 +1,6 @@
 const express = require("express");
 const mongoose = require("mongoose");
-const bcrypt = require("bcryptjs");
+const { checkLogin } = require("../../services/login");
 const jwt = require("jsonwebtoken");
 const Admin = require("../../models/Admin");
 const Master = require("../../models/Master");
@@ -8,6 +8,7 @@ const Users = require("../../models/User");
 const Order = require("../../models/Order");
 const Complaint = require("../../models/Complaint");
 const { requireAuth, requireRole } = require("../../middleware/auth");
+const { router: extra, log } = require("./manage");
 
 const router = express.Router();
 const escapeRegex = (t) => String(t).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -19,7 +20,7 @@ router.post("/login", async (req, res) => {
   const { email, password } = req.body;
   if (typeof email !== "string" || typeof password !== "string") return res.status(400).json({ message: "Email və şifrə tələb olunur" });
   const admin = await Admin.findOne({ email: email.trim() });
-  if (!admin || !(await bcrypt.compare(password, admin.password))) {
+  if (!(await checkLogin(admin, password))) {
     return res.status(400).json({ message: "Daxil etdiyiniz məlumatlar yanlışdır" });
   }
   const token = jwt.sign({ id: admin._id, role: "admin" }, process.env.JWT_SECRET, { expiresIn: "12h" });
@@ -28,23 +29,26 @@ router.post("/login", async (req, res) => {
 
 // Bütün aşağıdakılar yalnız admin üçündür
 router.use(requireAuth, requireRole("admin"));
+router.use(extra);
 
 // İcmal: əsas rəqəmlər
 router.get("/stats", async (req, res) => {
   const weekAgo = new Date(Date.now() - 7 * 86400000);
+  const demoMasters = await Master.countDocuments({ isDemo: true });
   const [masters, availableMasters, blockedMasters, customers, ordersByStatus, ordersWeek, complaintsOpen, ratingAgg] = await Promise.all([
-    Master.countDocuments(),
-    Master.countDocuments({ isAvailable: { $ne: false }, isBlocked: { $ne: true } }),
+    Master.countDocuments({ isDemo: { $ne: true } }),
+    Master.countDocuments({ isDemo: { $ne: true }, isAvailable: { $ne: false }, isBlocked: { $ne: true } }),
     Master.countDocuments({ isBlocked: true }),
     Users.countDocuments(),
-    Order.aggregate([{ $group: { _id: "$status", count: { $sum: 1 } } }]),
-    Order.countDocuments({ createdAt: { $gte: weekAgo } }),
+    Order.aggregate([{ $match: Order.OWN }, { $group: { _id: "$status", count: { $sum: 1 } } }]),
+    Order.countDocuments({ ...Order.OWN, createdAt: { $gte: weekAgo } }),
     Complaint.countDocuments({ status: { $in: ["open", "in_review"] } }),
     Order.aggregate([{ $match: { "review.rating": { $exists: true } } }, { $group: { _id: null, avg: { $avg: "$review.rating" }, count: { $sum: 1 } } }]),
   ]);
   const orders = Object.fromEntries(ordersByStatus.map((o) => [o._id, o.count]));
   res.json({
     masters,
+    demoMasters,
     availableMasters,
     blockedMasters,
     customers,
@@ -80,13 +84,14 @@ router.patch("/complaints/:id", async (req, res) => {
   if (adminNote !== undefined) update.adminNote = adminNote;
   const c = await Complaint.findByIdAndUpdate(req.params.id, update, { new: true }).populate("order", "status description category");
   if (!c) return res.status(404).json({ message: "Tapılmadı" });
+  await log(req, "Şikayət", c.target.name, status || "qeyd");
   res.json(c);
 });
 
 // ---------- Sifarişlər ----------
 router.get("/orders", async (req, res) => {
-  const filter = {};
-  if (req.query.status) filter.status = req.query.status;
+  const filter = { ...Order.OWN };
+  if (Order.STATUSES.includes(req.query.status)) filter.status = req.query.status;
   if (req.query.q) {
     const rx = { $regex: escapeRegex(req.query.q), $options: "i" };
     filter.$or = [{ "customer.name": rx }, { "customer.email": rx }, { description: rx }, { address: rx }, { category: rx }];
@@ -102,7 +107,7 @@ router.get("/orders", async (req, res) => {
 // Admin aktiv sifarişi ləğv edə bilər (məs. şikayətdən sonra)
 router.patch("/orders/:id/cancel", async (req, res) => {
   if (!isId(req.params.id)) return res.status(404).json({ message: "Tapılmadı" });
-  const order = await Order.findById(req.params.id);
+  const order = await Order.findOne({ ...Order.OWN, _id: req.params.id });
   if (!order) return res.status(404).json({ message: "Tapılmadı" });
   if (["completed", "cancelled", "rejected"].includes(order.status)) {
     return res.status(400).json({ message: "Bu sifariş artıq bağlanıb" });
@@ -112,6 +117,7 @@ router.patch("/orders/:id/cancel", async (req, res) => {
   order.masterNote = order.masterNote || undefined;
   await order.save({ validateBeforeSave: false });
   req.app.get("notifyUsers")?.([order.customer.email, String(order.master)], "order_updated", { _id: order._id, status: order.status });
+  await log(req, "Sifariş ləğv", order.customer.name, order.description);
   await order.populate("master", "name surname email category");
   res.json(order);
 });
@@ -124,6 +130,9 @@ router.get("/masters", async (req, res) => {
     filter.$or = [{ name: rx }, { surname: rx }, { email: rx }, { category: rx }, { city: rx }, { phone: rx }];
   }
   if (req.query.blocked === "1") filter.isBlocked = true;
+  if (req.query.type === "real") filter.isDemo = { $ne: true };
+  if (req.query.type === "demo") filter.isDemo = true;
+  if (typeof req.query.category === "string" && req.query.category) filter.category = req.query.category;
   const { limit, skip } = pageOf(req);
   const [items, total, complaintCounts] = await Promise.all([
     Master.find(filter).select("-password -resetPasswordToken -resetPasswordExpires -followers -following -posts").sort({ createdAt: -1 }).skip(skip).limit(limit).lean(),
@@ -141,6 +150,8 @@ router.patch("/masters/:id", async (req, res) => {
   if (req.body.isAvailable !== undefined) update.isAvailable = Boolean(req.body.isAvailable);
   const m = await Master.findByIdAndUpdate(req.params.id, update, { new: true }).select("-password -resetPasswordToken -resetPasswordExpires").lean();
   if (!m) return res.status(404).json({ message: "Tapılmadı" });
+  if (update.isBlocked) req.app.get("disconnectUser")?.(String(m._id));
+  await log(req, "Usta statusu", `${m.name} ${m.surname}`, JSON.stringify(update));
   res.json(m);
 });
 
@@ -155,7 +166,7 @@ router.get("/customers", async (req, res) => {
   const [items, total, orderCounts] = await Promise.all([
     Users.find(filter).select("username email phoneNumber isBlocked").sort({ _id: -1 }).skip(skip).limit(limit).lean(),
     Users.countDocuments(filter),
-    Order.aggregate([{ $group: { _id: "$customer.id", count: { $sum: 1 } } }]),
+    Order.aggregate([{ $match: Order.OWN }, { $group: { _id: "$customer.id", count: { $sum: 1 } } }]),
   ]);
   const orders = Object.fromEntries(orderCounts.map((o) => [String(o._id), o.count]));
   res.json({ items: items.map((u) => ({ ...u, orders: orders[String(u._id)] || 0 })), total });
@@ -167,6 +178,8 @@ router.patch("/customers/:id", async (req, res) => {
     .select("username email phoneNumber isBlocked")
     .lean();
   if (!u) return res.status(404).json({ message: "Tapılmadı" });
+  if (u.isBlocked) req.app.get("disconnectUser")?.(u.email);
+  await log(req, u.isBlocked ? "Müştəri bloklandı" : "Müştəri blokdan çıxdı", u.email);
   res.json(u);
 });
 

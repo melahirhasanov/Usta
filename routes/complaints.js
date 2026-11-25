@@ -23,12 +23,12 @@ router.post("/", requireAuth, requireRole("customer", "master"), async (req, res
       order = await Order.findById(orderId).populate("master", "name surname");
       const mine =
         order &&
-        (req.account.role === "master" ? String(order.master._id) === req.account.id : String(order.customer.id) === req.account.id);
+        (req.account.role === "master" ? String(order.master?._id) === req.account.id : String(order.customer.id) === req.account.id);
       if (!mine) return res.status(404).json({ message: "Sifariş tapılmadı" });
       target =
         req.account.role === "master"
           ? { type: "customer", id: String(order.customer.id), name: order.customer.name }
-          : { type: "master", id: String(order.master._id), name: `${order.master.name} ${order.master.surname}` };
+          : !order.master ? null : { type: "master", id: String(order.master._id), name: `${order.master.name} ${order.master.surname}` };
     } else {
       // Sifarişsiz şikayət yalnız ustaya qarşı (profil səhifəsindən)
       if (!mongoose.Types.ObjectId.isValid(masterId)) return res.status(400).json({ message: "Usta seçilməyib" });
@@ -37,6 +37,8 @@ router.post("/", requireAuth, requireRole("customer", "master"), async (req, res
       if (String(master._id) === req.account.id) return res.status(400).json({ message: "Özünüzdən şikayət edə bilməzsiniz" });
       target = { type: "master", id: String(master._id), name: `${master.name} ${master.surname}` };
     }
+
+    if (!target) return res.status(400).json({ message: "Bu sifarişin ustasının hesabı silinib" });
 
     const complaint = await Complaint.create({
       reporter: { role: req.account.role, id: req.account.id, name: req.account.name, email: req.account.email },

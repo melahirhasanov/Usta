@@ -2,6 +2,8 @@ const express = require("express");
 const mongoose = require("mongoose");
 const Order = require("../models/Order");
 const Master = require("../models/Master");
+const { getSettings } = require("../models/SiteSettings");
+const { checkCoords } = require("../middleware/validate");
 const { requireAuth, requireRole } = require("../middleware/auth");
 
 const router = express.Router();
@@ -32,7 +34,7 @@ const isParticipant = (order, account) =>
 function notify(req, order) {
   const notifyUsers = req.app.get("notifyUsers");
   if (!notifyUsers) return;
-  notifyUsers([order.customer.email, String(order.master._id || order.master)], "order_updated", {
+  notifyUsers([order.customer.email, String(order.master?._id || order.master)].filter((id) => id && id !== "null"), "order_updated", {
     _id: order._id,
     status: order.status,
   });
@@ -41,11 +43,14 @@ function notify(req, order) {
 // Yeni sifariş (yalnız müştəri)
 router.post("/", requireAuth, requireRole("customer"), async (req, res) => {
   try {
+    if (!(await getSettings()).ordersEnabled) return res.status(503).json({ message: "Sifariş qəbulu müvəqqəti dayandırılıb" });
     const { masterId, description, address, latitude, longitude, scheduledAt } = req.body;
     if (!mongoose.Types.ObjectId.isValid(masterId)) return res.status(400).json({ message: "Usta seçilməyib" });
     if (!description?.trim() || !address?.trim()) {
       return res.status(400).json({ message: "İşin təsviri və ünvan tələb olunur" });
     }
+    const badCoords = latitude != null || longitude != null ? checkCoords(latitude, longitude) : null;
+    if (badCoords) return res.status(400).json({ message: badCoords });
     const master = await Master.findById(masterId).select("category isAvailable isBlocked isDemo");
     if (!master || master.isBlocked) return res.status(404).json({ message: "Usta tapılmadı" });
     if (master.isDemo) return res.status(400).json({ message: "Bu nümunə profildir, sifariş qəbul etmir" });
@@ -95,6 +100,8 @@ router.patch("/:id/status", requireAuth, async (req, res) => {
       return res.status(400).json({ message: "Bu əməliyyat sifarişin indiki vəziyyətində mümkün deyil" });
     }
 
+    const locked = await Order.updateOne({ _id: order._id, status: order.status }, { status });
+    if (!locked.modifiedCount) return res.status(409).json({ message: "Sifariş artıq dəyişib, səhifəni yeniləyin" });
     order.status = status;
     order.history.push({ status, by: req.account.role });
     if (req.account.role === "master") {
@@ -129,8 +136,10 @@ router.post("/:id/review", requireAuth, requireRole("customer"), async (req, res
     if (order.status !== "completed") return res.status(400).json({ message: "Rəy yalnız tamamlanmış sifarişə yazıla bilər" });
     if (order.review?.rating) return res.status(400).json({ message: "Bu sifarişə artıq rəy yazılıb" });
 
+    // Şərtli yeniləmə: eyni anda iki sorğu ilə ikinci rəy yazılmasın
+    const saved = await Order.updateOne({ _id: order._id, "review.rating": { $exists: false } }, { review: { rating, comment: comment.slice(0, 500), createdAt: new Date() } });
+    if (!saved.modifiedCount) return res.status(400).json({ message: "Bu sifarişə artıq rəy yazılıb" });
     order.review = { rating, comment, createdAt: new Date() };
-    await order.save();
 
     // Ustanın orta reytinqini yenidən hesabla
     const [stats] = await Order.aggregate([
@@ -186,7 +195,7 @@ router.get("/reviews/:masterId", async (req, res) => {
       reviews: orders.map((o) => ({
         _id: o._id,
         // Müştərinin tam adı yox, yalnız ilk adı və soyadın ilk hərfi göstərilir
-        customerName: (o.customer?.name || "Müştəri").split(" ").map((p, i) => (i === 0 ? p : `${p[0]}.`)).join(" "),
+        customerName: (o.customer?.name || "Müştəri").split("@")[0].trim().split(/\s+/).map((p, i) => (i === 0 ? p : `${p[0]}.`)).join(" "),
         category: o.category,
         rating: o.review.rating,
         comment: o.review.comment,
