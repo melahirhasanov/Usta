@@ -4,7 +4,7 @@ const Message = require("../models/Message");
 const Master = require("../models/Master");
 const Users = require("../models/User");
 const { requireAuth } = require("../middleware/auth");
-const { belongsToRoom, resolveReceiver } = require("../socket");
+const { belongsToRoom, otherSide, resolveReceiver } = require("../socket");
 
 const router = express.Router();
 
@@ -16,7 +16,7 @@ const idVariants = (id) =>
 router.use(requireAuth);
 
 const ownRoom = (req, res, next) =>
-  belongsToRoom(req.params.roomId, req.account.chatId) ? next() : res.status(403).json({ message: "İcazə yoxdur" });
+  belongsToRoom(req.params.roomId, req.account) ? next() : res.status(403).json({ message: "İcazə yoxdur" });
 
 // İstifadəçinin bütün söhbətləri (son mesaj, oxunmamış say, qarşı tərəf)
 router.get("/conversations", async (req, res) => {
@@ -82,7 +82,7 @@ router.put("/room/:roomId/read-all", ownRoom, async (req, res) => {
     const result = await Message.updateMany({ roomId: req.params.roomId, senderId: { $ne: me }, isRead: false }, { isRead: true });
     if (result.modifiedCount > 0) {
       const notifyUsers = req.app.get("notifyUsers");
-      const other = req.params.roomId.startsWith(`${me}_`) ? req.params.roomId.slice(me.length + 1) : req.params.roomId.slice(0, -(me.length + 1));
+      const other = otherSide(req.params.roomId, req.account);
       notifyUsers?.([other], "messages_read", { roomId: req.params.roomId });
     }
     res.json({ success: true, updatedCount: result.modifiedCount });

@@ -1,5 +1,5 @@
 // Qeydiyyat və profil üçün ortaq yoxlamalar. Xəta varsa mətn, yoxdursa null qaytarır.
-const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
+const EMAIL_RE = /^[^\s@]+@[a-z0-9.-]+\.[a-z]{2,}$/i;
 
 const str = (v) => typeof v === "string";
 
@@ -9,8 +9,8 @@ function checkEmail(email) {
 }
 
 function checkPassword(password) {
-  if (!str(password) || password.length < 6) return "Şifrə ən azı 6 simvol olmalıdır";
-  if (password.length > 128) return "Şifrə çox uzundur";
+  if (!str(password) || password.length < 8) return "Şifrə ən azı 8 simvol olmalıdır";
+  if (Buffer.byteLength(password) > 72) return "Şifrə çox uzundur (ən çox 72 bayt)"; // bcrypt 72 baytdan sonrasını nəzərə almır
   return null;
 }
 

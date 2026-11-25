@@ -32,7 +32,7 @@ function rateLimit({ windowMs, max, message = "Çox sayda sorğu göndərildi. B
   }, windowMs).unref();
 
   return (req, res, next) => {
-    const id = key ? key(req) : `${req.ip}|${req.baseUrl}${req.path}`;
+    const id = key ? key(req) : `${req.ip}|${req.baseUrl}${req.path}`.toLowerCase().replace(/\/+$/, "");
     const now = Date.now();
     const entry = hits.get(id);
     if (!entry || entry.resetAt <= now) {
@@ -54,6 +54,8 @@ const MIN = 60 * 1000;
 const limits = {
   // Giriş, qeydiyyat, şifrə bərpası: brute-force-a qarşı
   auth: rateLimit({ windowMs: 15 * MIN, max: 10, message: "Çox sayda cəhd. 15 dəqiqə sonra yenidən yoxlayın." }),
+  // Eyni hesaba müxtəlif IP-lərdən şifrə seçməyə qarşı
+  account: rateLimit({ windowMs: 15 * MIN, max: 30, message: "Bu hesab üçün çox sayda cəhd. 15 dəqiqə sonra yenidən yoxlayın.", key: (req) => `acc|${String(req.body?.email || "").trim().toLowerCase().slice(0, 120)}` }),
   // Bərpa emaili: eyni IP-dən saatda 5
   passwordReset: rateLimit({ windowMs: 60 * MIN, max: 5, message: "Çox sayda bərpa sorğusu. Bir saat sonra yenidən yoxlayın." }),
   // Sifariş və şikayət yaratmaq: spam-a qarşı

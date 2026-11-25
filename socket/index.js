@@ -6,9 +6,18 @@ const Users = require("../models/User");
 const Order = require("../models/Order");
 const { resolveAccount } = require("../middleware/auth");
 
-// Otaq ID formatı: "<müştəri email>_<usta ID>" — istifadəçi yalnız öz ID-si olan otağa qoşula bilər
-const belongsToRoom = (roomId, chatId) =>
-  typeof roomId === "string" && (roomId.startsWith(`${chatId}_`) || roomId.endsWith(`_${chatId}`));
+// Otaq ID formatı: "<müştəri email>_<usta ID (24 hex)>". Sonuncu "_" dəqiq ayırıcıdır.
+function parseRoom(roomId) {
+  const m = typeof roomId === "string" && roomId.length < 200 ? /^(.+)_([0-9a-f]{24})$/.exec(roomId) : null;
+  return m ? { email: m[1], masterId: m[2] } : null;
+}
+// İstifadəçi yalnız rolunun tərəfində dəqiq özü olan otağa aiddir (oxşar/prefiks email ilə girmək olmaz)
+function belongsToRoom(roomId, account) {
+  const r = parseRoom(roomId);
+  if (!r) return false;
+  return (account.role === "customer" && r.email === account.chatId) || (account.role === "master" && r.masterId === account.chatId);
+}
+const otherSide = (roomId, account) => (account.role === "customer" ? parseRoom(roomId).masterId : parseRoom(roomId).email);
 
 /**
  * Otaqdakı qarşı tərəfi serverdə müəyyən edir (client-in göndərdiyi receiverId-yə etibar edilmir).
@@ -16,15 +25,14 @@ const belongsToRoom = (roomId, chatId) =>
  * Qaytarır: { id, name } və ya null
  */
 async function resolveReceiver(roomId, account) {
-  if (!belongsToRoom(roomId, account.chatId)) return null;
+  if (!belongsToRoom(roomId, account)) return null;
   if (account.role === "customer") {
-    const masterId = roomId.slice(account.chatId.length + 1);
-    if (!mongoose.Types.ObjectId.isValid(masterId)) return null;
+    const masterId = otherSide(roomId, account);
     const m = await Master.findOne({ _id: masterId, isBlocked: { $ne: true }, isDemo: { $ne: true } }).select("name surname").lean();
     return m ? { id: String(m._id), name: `${m.name} ${m.surname}` } : null;
   }
   if (account.role === "master") {
-    const email = roomId.slice(0, -(account.chatId.length + 1));
+    const email = otherSide(roomId, account);
     const u = await Users.findOne({ email }).select("username email").lean();
     return u ? { id: u.email, name: u.username || u.email } : null;
   }
@@ -49,6 +57,7 @@ function eventLimiter(max, windowMs) {
 function setupSocket(server, app, allowedOrigins) {
   const io = socketIo(server, {
     cors: { origin: allowedOrigins, methods: ["GET", "POST"], credentials: true },
+    maxHttpBufferSize: 100 * 1024, // zəng SDP-si üçün kifayətdir
   });
 
   // chatId -> Set(socketId) (eyni istifadəçi bir neçə tabda ola bilər)
@@ -71,7 +80,35 @@ function setupSocket(server, app, allowedOrigins) {
   app.set("broadcastMessage", broadcastMessage);
   app.set("notifyUsers", notifyUsers);
   app.set("isOnline", (chatId) => onlineUsers.has(String(chatId)));
-  app.set("onlineIds", () => [...onlineUsers.keys()]);
+  const isMasterId = (id) => /^[0-9a-f]{24}$/.test(id);
+  app.set("onlineMasterIds", () => [...onlineUsers.keys()].filter(isMasterId));
+  // Bloklanan/silinən hesabın açıq bağlantıları dərhal kəsilir
+  app.set("disconnectUser", (chatId) => socketsOf(chatId).forEach((id) => io.sockets.sockets.get(id)?.disconnect(true)));
+
+  // Müştərinin onlayn statusu yalnız yazışdığı ustalara bildirilir (email başqasına getmir)
+  const partnersOf = (account) =>
+    account.role === "customer"
+      ? Message.distinct("roomId", { $or: [{ senderId: account.chatId }, { receiverId: account.chatId }] }).then((rooms) => rooms.filter((r) => belongsToRoom(r, account)).map((r) => otherSide(r, account)))
+      : Promise.resolve([]);
+  async function announce(account, isOnline) {
+    const payload = { userId: account.chatId, userType: account.role, isOnline };
+    if (account.role === "master") return io.emit("user_status", payload);
+    if (account.role === "customer") notifyUsers(await partnersOf(account), "user_status", payload);
+  }
+  // Ustaya qoşulanda onlayn müştərilərini göstər
+  async function sendPresence(socket, account) {
+    if (account.role !== "master") return;
+    const rooms = await Message.distinct("roomId", { $or: [{ senderId: account.chatId }, { receiverId: account.chatId }] });
+    for (const r of rooms) if (belongsToRoom(r, account) && onlineUsers.has(otherSide(r, account))) socket.emit("user_status", { userId: otherSide(r, account), userType: "customer", isOnline: true });
+  }
+  // Zəng: müştəri istənilən ustaya, usta isə yalnız yazışdığı və ya sifarişi olan müştəriyə
+  async function mayCall(account, to) {
+    if (account.role === "customer") return isMasterId(to) && Boolean(await Master.exists({ _id: to, isBlocked: { $ne: true }, isDemo: { $ne: true } }));
+    if (account.role !== "master") return false;
+    return Boolean((await Message.exists({ roomId: `${to}_${account.chatId}` })) || (await Order.exists({ "customer.email": to, master: account.chatId })));
+  }
+  const calls = new Map(); // callId -> { a, b, at }: yalnız bu iki tərəf siqnal göndərə bilər
+  setInterval(() => { const old = Date.now() - 3 * 3600000; for (const [k, v] of calls) if (v.at < old) calls.delete(k); }, 600000).unref();
 
   // Hər bağlantı JWT ilə yoxlanılır; kimlik client-in dediyindən yox, tokendən götürülür
   io.use(async (socket, next) => {
@@ -86,7 +123,18 @@ function setupSocket(server, app, allowedOrigins) {
   });
 
   io.on("connection", (socket) => {
-    const { chatId, name, role } = socket.data.account;
+    const account = socket.data.account;
+    const { chatId, name, role } = account;
+    // Pozuq paket (null, sətir, rəqəm...) və handler xətası serveri çökdürməsin
+    const on = (event, handler) =>
+      socket.on(event, async (data) => {
+        try {
+          await handler(data && typeof data === "object" && !Array.isArray(data) ? data : {});
+        } catch (e) {
+          console.error(`Socket ${event} xətası:`, e.message);
+        }
+      });
+    const allowSignal = eventLimiter(300, 60000); // ICE namizədləri üçün geniş limit
     const allowMessage = eventLimiter(20, 10000); // 10 saniyədə 20 mesaj
     const allowCall = eventLimiter(5, 60000); // dəqiqədə 5 zəng cəhdi
 
@@ -94,17 +142,18 @@ function setupSocket(server, app, allowedOrigins) {
     const wasOffline = set.size === 0;
     set.add(socket.id);
     onlineUsers.set(chatId, set);
-    if (wasOffline) io.emit("user_status", { userId: chatId, userName: name, userType: role, isOnline: true });
+    if (wasOffline) announce(account, true).catch(() => {});
+    sendPresence(socket, account).catch(() => {});
 
-    socket.on("join_room", ({ roomId } = {}) => {
-      if (belongsToRoom(roomId, chatId)) socket.join(roomId);
+    on("join_room", ({ roomId } = {}) => {
+      if (belongsToRoom(roomId, account)) socket.join(roomId);
     });
 
-    socket.on("leave_room", ({ roomId } = {}) => {
-      if (roomId) socket.leave(roomId);
+    on("leave_room", ({ roomId } = {}) => {
+      if (typeof roomId === "string") socket.leave(roomId);
     });
 
-    socket.on("send_message", async (data = {}) => {
+    on("send_message", async (data = {}) => {
       const { roomId, message, tempId } = data;
       try {
         if (!allowMessage()) return socket.emit("message_error", { tempId, message: "Çox tez-tez yazırsınız, bir az gözləyin" });
@@ -127,15 +176,15 @@ function setupSocket(server, app, allowedOrigins) {
       }
     });
 
-    socket.on("typing_indicator", ({ roomId, isTyping } = {}) => {
-      if (belongsToRoom(roomId, chatId)) socket.to(roomId).emit("typing_indicator", { roomId, userId: chatId, isTyping });
+    on("typing_indicator", ({ roomId, isTyping } = {}) => {
+      if (allowSignal() && belongsToRoom(roomId, account)) socket.to(roomId).emit("typing_indicator", { roomId, userId: chatId, isTyping: Boolean(isTyping) });
     });
 
     // ---------- Ustanın canlı yeri (sifariş "Yoldadır" statusunda) ----------
     // Usta yalnız öz sifarişi üçün yer göndərə bilər; yer müştəriyə ötürülür və sifarişdə saxlanılır
     const allowLocation = eventLimiter(30, 60000); // dəqiqədə ən çox 30 yeniləmə
     const trackCache = new Map(); // orderId -> { customer, until }
-    socket.on("order:location", async ({ orderId, lat, lng } = {}) => {
+    on("order:location", async ({ orderId, lat, lng } = {}) => {
       try {
         if (role !== "master" || !allowLocation()) return;
         if (!mongoose.Types.ObjectId.isValid(orderId) || !Number.isFinite(lat) || !Number.isFinite(lng)) return;
@@ -162,20 +211,33 @@ function setupSocket(server, app, allowedOrigins) {
       return targets.length > 0;
     };
 
-    socket.on("call:offer", ({ to, sdp, callId } = {}) => {
-      if (!to || to === chatId || typeof to !== "string") return;
-      if (!allowCall()) return socket.emit("call:unavailable", { callId });
-      const delivered = relay("call:incoming", to, { sdp, callId });
-      if (!delivered) socket.emit("call:unavailable", { callId });
+    const peer = (to, callId) => {
+      const c = typeof callId === "string" ? calls.get(callId) : null;
+      return c && allowSignal() && ((c.a === chatId && c.b === to) || (c.b === chatId && c.a === to));
+    };
+    on("call:offer", async ({ to, sdp, callId }) => {
+      if (typeof to !== "string" || to === chatId || typeof callId !== "string" || callId.length > 80 || calls.has(callId)) return;
+      if (!allowCall() || !(await mayCall(account, to))) return socket.emit("call:unavailable", { callId });
+      calls.set(callId, { a: chatId, b: to, at: Date.now() });
+      if (!relay("call:incoming", to, { sdp, callId })) {
+        calls.delete(callId);
+        socket.emit("call:unavailable", { callId });
+      }
     });
-    socket.on("call:answer", ({ to, sdp, callId } = {}) => {
+    on("call:answer", ({ to, sdp, callId }) => {
+      if (!peer(to, callId)) return;
       // Cavab verildi: zəngi qəbul edənin digər tablarında zəng səsini dayandır
       relay("call:answered", to, { sdp, callId });
       socketsOf(chatId).filter((id) => id !== socket.id).forEach((id) => io.to(id).emit("call:taken", { callId }));
     });
-    socket.on("call:ice", ({ to, candidate, callId } = {}) => relay("call:ice", to, { candidate, callId }));
-    socket.on("call:reject", ({ to, callId } = {}) => relay("call:rejected", to, { callId }));
-    socket.on("call:end", ({ to, callId } = {}) => relay("call:ended", to, { callId }));
+    on("call:ice", ({ to, candidate, callId }) => peer(to, callId) && relay("call:ice", to, { candidate, callId }));
+    const endWith = (event) => ({ to, callId }) => {
+      if (!peer(to, callId)) return;
+      relay(event, to, { callId });
+      calls.delete(callId);
+    };
+    on("call:reject", endWith("call:rejected"));
+    on("call:end", endWith("call:ended"));
 
     socket.on("disconnect", () => {
       const sockets = onlineUsers.get(chatId);
@@ -183,7 +245,7 @@ function setupSocket(server, app, allowedOrigins) {
       sockets.delete(socket.id);
       if (sockets.size === 0) {
         onlineUsers.delete(chatId);
-        io.emit("user_status", { userId: chatId, userName: name, userType: role, isOnline: false });
+        announce(account, false).catch(() => {});
       }
     });
   });
@@ -191,4 +253,4 @@ function setupSocket(server, app, allowedOrigins) {
   return io;
 }
 
-module.exports = { setupSocket, belongsToRoom, resolveReceiver };
+module.exports = { setupSocket, parseRoom, belongsToRoom, otherSide, resolveReceiver };

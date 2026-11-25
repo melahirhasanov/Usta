@@ -19,7 +19,8 @@ async function resolveAccount(token) {
   const payload = jwt.verify(token, process.env.JWT_SECRET, { algorithms: ["HS256"] });
 
   if (payload.role === "admin") {
-    const a = await Admin.findById(payload.id).select("name email").lean();
+    const a = await Admin.findById(payload.id).select("name email passwordChangedAt").lean();
+    if (a && issuedBeforePasswordChange(payload, a)) throw new Error("expired");
     if (a) return { id: String(a._id), role: "admin", chatId: `admin:${a._id}`, name: a.name, email: a.email };
     throw new Error("Hesab tapılmadı");
   }

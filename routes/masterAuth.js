@@ -1,5 +1,6 @@
 const express = require("express");
 const bcrypt = require("bcryptjs");
+const { findByEmail, checkLogin } = require("../services/login");
 const jwt = require("jsonwebtoken");
 const master = require("../models/Master");
 const { CATEGORIES } = require("../config/constants");
@@ -13,7 +14,6 @@ router.post("/registerUsta", async (req, res) => {
 
     // Daxil olan datanın düzgün formatda olub-olmadığını yoxla
     if (!name || !email || !password || !phone || !surname || !city || !category || latitude == null || longitude == null) {
-      console.log("Bütün sahələri doldurun!");
       return res.status(400).json({ message: "Bütün sahələri doldurun!" });
     }
     const invalid = firstError(
@@ -25,7 +25,7 @@ router.post("/registerUsta", async (req, res) => {
     if (invalid) return res.status(400).json({ message: invalid });
 
     // İstifadəçi mövcuddurmu?
-    const userExist = await master.findOne({ $or: [{ email: email.trim() }, { phone: String(phone) }] });
+    const userExist = (await findByEmail(master, email)) || (await master.exists({ phone: String(phone) }));
     if (userExist) {
       return res.status(400).json({ message: "Bu email və ya telefon artıq qeydiyyatdadır" });
     }
@@ -36,7 +36,7 @@ router.post("/registerUsta", async (req, res) => {
     // Yeni istifadəçi yarat
     const newUser = new master({
       name: name.trim(),
-      email: email.trim(),
+      email: email.trim().toLowerCase(),
       password: hashedPassword,
       phone: String(phone),
       surname: surname.trim(),
@@ -64,33 +64,17 @@ router.post("/loginUsta", async (req, res) => {
 
     // Əgər email və ya password göndərilməyibsə
     if (!email || !password) {
-      console.log("Email və şifrə tələb olunur!");
       return res.status(400).json({ message: "Email və şifrə tələb olunur!" });
     }
 
     // Əgər email və password string formatında deyilsə
     if (typeof email !== "string" || typeof password !== "string") {
-      console.log("Email və ya şifrə düzgün formatda deyil!");
       return res.status(400).json({ message: "Email və ya şifrə düzgün formatda deyil!" });
     }
 
-    // İstifadəçi bazada varmı?
-    const user = await master.findOne({ email });
-    if (!user) {
-      console.log("İstifadəçi tapılmadım!");
-      return res.status(400).json({ message: "Daxil etdiyiniz məlumatlar yanlışdır!" });
-    }
-
-    
-    // Şifrə uyğunluğunu yoxlayın
-    const isMatch = await bcrypt.compare(password, user.password);
-    if (isMatch && user.isBlocked) {
-      return res.status(403).json({ message: "Hesabınız administrator tərəfindən bloklanıb" });
-    }
-    console.log("Şifrə uyğunluğu:", isMatch);
-    if (!isMatch) {
-      return res.status(400).json({ message: "Daxil etdiyiniz məlumatlar yanlışdır!" });
-    }
+    const user = await findByEmail(master, email);
+    if (!(await checkLogin(user, password))) return res.status(400).json({ message: "Daxil etdiyiniz məlumatlar yanlışdır!" });
+    if (user.isBlocked) return res.status(403).json({ message: "Hesabınız administrator tərəfindən bloklanıb" });
 
     // JWT Token yarat
     const token = jwt.sign({ id: user._id, role: "master" }, process.env.JWT_SECRET, { expiresIn: "7d" });
@@ -103,9 +87,8 @@ router.post("/loginUsta", async (req, res) => {
         name: user.name,
         profileImage: user.profileImage,
         email: user.email,
-        surname:user.surname,
-        phone:user.phone,
-        surname:user.surname,
+        surname: user.surname,
+        phone: user.phone,
         category:user.category,
         city:user.city,
         isAvailable:user.isAvailable !== false

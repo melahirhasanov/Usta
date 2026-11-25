@@ -1,5 +1,5 @@
 const express = require("express");
-const bcrypt = require("bcryptjs");
+const { findByEmail, checkLogin } = require("../services/login");
 const jwt = require("jsonwebtoken");
 const Users = require("../models/User");
 const { checkEmail, checkName, checkPassword, checkPhone, firstError } = require("../middleware/validate");
@@ -19,17 +19,15 @@ router.post("/register", async (req, res) => {
     if (invalid) return res.status(400).json({ message: invalid });
 
     // İstifadəçi mövcuddurmu?
-    const userExist = await Users.findOne({ email: email.trim() });
+    const userExist = await findByEmail(Users, email);
     if (userExist) {
       return res.status(400).json({ message: "Username və ya email artıq mövcuddur!" });
     }
 
-    // Şifrəni hash et
-
     // Yeni istifadəçi yarat
     const newUser = new Users({
       username: username.trim(),
-      email: email.trim(),
+      email: email.trim().toLowerCase(),
       password,
       ...(phoneNumber ? { phoneNumber: Number(phoneNumber) } : {}),
     });
@@ -58,27 +56,9 @@ router.post("/login", async (req, res) => {
       return res.status(400).json({ message: "Email və ya şifrə düzgün formatda deyil!" });
     }
 
-    // İstifadəçi bazada varmı?
-    const user = await Users.findOne({ email });
-    if (!user) {
-      console.log("İstifadəçi tapılmadı!");
-      return res.status(400).json({ message: "Daxil etdiyiniz məlumatlar yanlışdır!" });
-    }
-
-    
-    // Şifrə uyğunluğunu yoxlayın
-    const isMatch = await bcrypt.compare(password, user.password);
-    if (isMatch && user.isBlocked) {
-      return res.status(403).json({ message: "Hesabınız administrator tərəfindən bloklanıb" });
-    }
-    console.log("Şifrə uyğunluğu:", isMatch); // true or false
-    if (!isMatch) {
-      return res.status(400).json({ message: "Daxil etdiyiniz məlumatlar yanlışdır!" });
-    }
-
-    
-
-
+    const user = await findByEmail(Users, email);
+    if (!(await checkLogin(user, password))) return res.status(400).json({ message: "Daxil etdiyiniz məlumatlar yanlışdır!" });
+    if (user.isBlocked) return res.status(403).json({ message: "Hesabınız administrator tərəfindən bloklanıb" });
 
     // JWT Token yarat
     const token = jwt.sign({ id: user._id, role: "customer" }, process.env.JWT_SECRET, { expiresIn: "7d" });

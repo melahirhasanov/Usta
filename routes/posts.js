@@ -93,7 +93,7 @@ router.get("/post", async (req, res) => {
   try {
     const { userId } = req.query;
     
-    if (!userId) {
+    if (typeof userId !== "string" || !mongoose.Types.ObjectId.isValid(userId)) {
       return res.status(400).json({
         success: false,
         message: "User ID tələb olunur"
