@@ -10,7 +10,7 @@ const router = express.Router()
 // İctimai sahələr: şifrə, bərpa tokeni və telefon nömrəsi heç vaxt qaytarılmır
 // (müştəri ustaya saytdan zəng edir, nömrə paylaşılmır)
 const PRIVATE_FIELDS = "-password -resetPasswordToken -resetPasswordExpires"
-const PUBLIC_FIELDS = `${PRIVATE_FIELDS} -phone -followers -following -isBlocked`
+const PUBLIC_FIELDS = `${PRIVATE_FIELDS} -phone -followers -following -isBlocked -profileImageId`
 
 // Yolda olan və ya işi icra edən ustalar "məşğul" sayılır
 async function busyMasterIds() {

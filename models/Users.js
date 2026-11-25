@@ -12,6 +12,8 @@ const userSchema = new mongoose.Schema({
     type: Number,
     match: [/^\+?\d{10,15}$/, "Please provide a valid phone number"]
   },
+  profileImage: { type: String },
+  profileImageId: { type: String },
   isBlocked: { type: Boolean, default: false },
   passwordChangedAt: { type: Date },
   resetPasswordToken: { type: String },

@@ -21,7 +21,7 @@ const TRANSITIONS = {
   },
 };
 
-const MASTER_FIELDS = "name surname category city ratingAvg ratingCount location";
+const MASTER_FIELDS = "name surname category city ratingAvg ratingCount location profileImage";
 
 const isParticipant = (order, account) =>
   account.role === "master"
@@ -46,8 +46,9 @@ router.post("/", requireAuth, requireRole("customer"), async (req, res) => {
     if (!description?.trim() || !address?.trim()) {
       return res.status(400).json({ message: "İşin təsviri və ünvan tələb olunur" });
     }
-    const master = await Master.findById(masterId).select("category isAvailable isBlocked");
+    const master = await Master.findById(masterId).select("category isAvailable isBlocked isDemo");
     if (!master || master.isBlocked) return res.status(404).json({ message: "Usta tapılmadı" });
+    if (master.isDemo) return res.status(400).json({ message: "Bu nümunə profildir, sifariş qəbul etmir" });
     if (master.isAvailable === false) return res.status(400).json({ message: "Usta hazırda sifariş qəbul etmir" });
 
     const order = await Order.create({

@@ -33,6 +33,7 @@ const postSchema = new mongoose.Schema({
     type: Number,
     default: 0
   },
+  isDemo: { type: Boolean, default: false },
   cloudinaryPublicId: {
     type: String // Cloudinary ID saxlamaq üçün
   }

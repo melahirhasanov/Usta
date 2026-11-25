@@ -101,6 +101,7 @@ router.post("/loginUsta", async (req, res) => {
       user: {
         id: user._id,
         name: user.name,
+        profileImage: user.profileImage,
         email: user.email,
         surname:user.surname,
         phone:user.phone,

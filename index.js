@@ -68,6 +68,7 @@ app.use("/api/auth", require("./routes/forgetten.js"));
 app.use("/api/master", require("./routes/ustam.js"));
 app.use("/api/ustalar", require("./routes/ustaTur.js"));
 app.use("/api/post", require("./routes/post.js"));
+app.use("/api/profile/photo", require("./routes/profilePhoto.js"));
 app.use("/api/messages", require("./routes/chatRoute.js"));
 app.use("/api/orders", require("./routes/orders.js"));
 app.use("/api/complaints", require("./routes/complaints.js"));

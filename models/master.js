@@ -10,6 +10,11 @@ const masterSchema = new mongoose.Schema({
     password: { type: String, required: true },
     bio: { type: String, trim: true, maxlength: 600, default: "" },
     experience: { type: Number, min: 0, max: 70, default: 0 },
+    // Profil şəkli (Cloudinary)
+    profileImage: { type: String },
+    profileImageId: { type: String },
+    // Nümunə profil (scripts/seedDemo.js): real adam deyil, sifariş və mesaj qəbul etmir
+    isDemo: { type: Boolean, default: false, index: true },
     // Tamamlanmış sifarişlərin rəylərindən hesablanır (routes/orders.js)
     ratingAvg: { type: Number, default: 0 },
     ratingCount: { type: Number, default: 0 },

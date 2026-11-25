@@ -20,7 +20,7 @@ async function resolveReceiver(roomId, account) {
   if (account.role === "customer") {
     const masterId = roomId.slice(account.chatId.length + 1);
     if (!mongoose.Types.ObjectId.isValid(masterId)) return null;
-    const m = await Master.findOne({ _id: masterId, isBlocked: { $ne: true } }).select("name surname").lean();
+    const m = await Master.findOne({ _id: masterId, isBlocked: { $ne: true }, isDemo: { $ne: true } }).select("name surname").lean();
     return m ? { id: String(m._id), name: `${m.name} ${m.surname}` } : null;
   }
   if (account.role === "master") {

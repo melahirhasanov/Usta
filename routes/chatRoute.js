@@ -1,6 +1,8 @@
 const express = require("express");
 const mongoose = require("mongoose");
 const Message = require("../models/message");
+const Master = require("../models/master");
+const Users = require("../models/Users");
 const { requireAuth } = require("../middleware/auth");
 const { belongsToRoom, resolveReceiver } = require("../socket");
 
@@ -47,6 +49,14 @@ router.get("/conversations", async (req, res) => {
       },
       { $sort: { lastMessageTime: -1 } },
     ]);
+    // Qarşı tərəfin profil şəkli: usta ID, müştəri email ilə tapılır
+    const others = conversations.map((c) => String(c.user._id));
+    const [ms, us] = await Promise.all([
+      Master.find({ _id: { $in: others.filter((i) => mongoose.Types.ObjectId.isValid(i)) }, profileImage: { $exists: true } }).select("profileImage").lean(),
+      Users.find({ email: { $in: others }, profileImage: { $exists: true } }).select("email profileImage").lean(),
+    ]);
+    const photos = new Map([...ms.map((m) => [String(m._id), m.profileImage]), ...us.map((u) => [u.email, u.profileImage])]);
+    for (const c of conversations) c.user.profileImage = photos.get(String(c.user._id));
     res.json({ success: true, data: conversations });
   } catch (error) {
     console.error("Söhbətlər gətirilmə xətası:", error.message);
